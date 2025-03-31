@@ -1,4 +1,5 @@
-lapply(c("tidyverse", "ggplot2", "readxl", "stringr", "lubridate"), library, character.only = TRUE)
+rm(list = ls())
+lapply(c("tidyverse", "ggplot2", "readxl", "stringr", "lubridate", "janitor"), library, character.only = TRUE)
 setwd("C:/Users/katie/OneDrive - UBC/Research/Turf/TurfStormwater_1") #SET THIS TO THE PATH WHERE YOUR FILE IS SAVED
 
 file_paths <- c("AltisRun1.4_QuantitationData_w_ISTD_20250226112814.xlsx") #SET THIS TO EXCEL SPREADSHEET FILE NAME
@@ -40,38 +41,37 @@ allData <- excelData %>%
          SampleName = if_else(SampleType == "Unknown", paste(Site, BottleNumber, sep = "-"), NA_character_)) %>% 
   select(Site, BottleNumber, SampleName, everything())
 
-#Summary
+# Summary Table: Calculate Mean ISTD Peak Area for each Compound
 summary <- bind_rows(
   allData %>% 
-    filter(SampleType == "Matrix Blank") %>% 
     group_by(Compound) %>% 
-    summarize(MeanBlankPeakArea = mean(PeakArea, na.rm = TRUE)) %>%
-    mutate(SampleType = "Matrix Blank") %>%
-    ungroup(),
-  allData %>% 
-    filter(SampleType == "Cal Std") %>% 
-    group_by(Compound) %>% 
-    summarize(MeanISTDPeakArea = mean(ISTDArea, na.rm = TRUE)) %>%
-    mutate(SampleType = "Cal Std") %>%
+    filter(SampleType %in% c("Cal Std", "Matrix Blank")) %>% 
+    summarize(MeanISTDPeakArea = mean(ISTDArea, na.rm = TRUE)) %>% 
     ungroup()
 )
 
+# Merging summary table with allData to add MeanISTDPeakArea
+allData <- allData %>%
+  left_join(summary, by = "Compound")
 
-#Checking Values
-allDataChecked <- allData %>% 
-  filter(SampleType == "Cal Std") %>% 
-  mutate(ccFlag = if_else(abs(CalculatedAmount - TheoreticalAmount) / CalculatedAmount > 0.2, 
-                          "FLAG", NA_character_))%>% 
-  mutate(ccIstdFlag = if_else)
-  select(ccFlag, everything())
+# Checking Cal Curve and calculating errors for all sample types
+compound_list <- unique(allData$Compound)
+compound_tables <- list()
+flag_reports <- list()
 
-#Checking ISTD in Samples
-istdCheck <- allData %>% 
-  filter(SampleType == "Unknown") %>% 
-  group_by(Compound) %>% 
-  summarize()
+for (compound in compound_list) {
+  compound_table <- allData %>%
+    filter(Compound == compound) %>%
+    mutate(StockPercentError = if_else(SampleType == "Cal Std", 
+                                  abs(CalculatedAmount - TheoreticalAmount) / TheoreticalAmount, 
+                                  NA_real_),
+      ISTDPercentError = abs(ISTDArea - MeanISTDPeakArea) / MeanISTDPeakArea) %>%
+    select(Compound, SampleType, SampleLevel, TheoreticalAmount, CalculatedAmount, 
+           StockPercentError, PeakArea, ISTDArea, MeanISTDPeakArea)
+  compound_tables[[compound]] <- compound_table
   
 
-  
-
-
+  flag_report <- compound_table %>%
+    mutate(FLAG = if_else(abs(StockPercentError) > 0.2, "Flagged", "OK"))
+  flag_reports[[compound]] <- flag_report
+}
