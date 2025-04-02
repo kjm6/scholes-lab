@@ -6,8 +6,7 @@ file_paths <- c("AltisRun1.4_QuantitationData_w_ISTD_20250226112814.xlsx") #SET 
 csvSampleTimes <- read.csv("SampleTimes.csv") #SET THIS TO SAMPLE SPREADSHEET FILE NAME
 
 #Converting files into one data frame
-excelData <- file_paths %>%
-  set_names() %>%
+excelData <- file_paths %>% set_names() %>%
   map(~ {
     file_path <- file.path(getwd(), .x)
     file_name <- basename(file_path) 
@@ -40,65 +39,47 @@ allData <- excelData %>%
          BottleNumber = if_else(SampleType == "Unknown", word(RawFileName, 2, sep = "[-_]"), NA_character_),
          SampleName = if_else(SampleType == "Unknown", paste(Site, BottleNumber, sep = "-"), NA_character_)) %>% 
   select(Site, BottleNumber, SampleName, everything()) %>% 
-  filter(Compound %in% c("6PPD Quinone"))
+  filter(Compound %in% c("Benzotriazole", "6PPD Quinone", "6ppd", "HMMM"))
 
-# Initialize result lists
-compound_tables <- list()
-flag_reports <- list()
+# Initialize result list
+result_tables <- list()
 
 # Process each compound
 for (compound in unique(allData$Compound)) {
   
-  meanIstdArea <- mean(allData %>% filter(Compound == compound, SampleType %in% c("Cal Std", "Matrix Blank")) %>%
-                                   pull(ISTDArea), na.rm = TRUE)
+  # Compute summary statistics
+  summaryStats <- allData %>% filter(Compound == compound) %>%
+    summarize(meanIstdArea = mean(ISTDArea[SampleType %in% c("Cal Std", "Matrix Blank")], na.rm = TRUE),
+              meanBlankArea = mean(PeakArea[SampleType == "Matrix Blank"], na.rm = TRUE),
+              meanQcLowArea = mean(PeakArea[SampleType == "QC Check" & TheoreticalAmount == 1.00], na.rm = TRUE),
+              meanQcHighArea = mean(PeakArea[SampleType == "QC Check" & TheoreticalAmount == 10.00], na.rm = TRUE),
+              detectionLimit = min(CalculatedAmount[SampleType == "Cal Std" & abs(CalculatedAmount - TheoreticalAmount) / TheoreticalAmount <= 0.2], na.rm = TRUE),
+    numBlanks = sum(as.numeric(SampleType == "Matrix Blank", na.rm = TRUE)),
+    numSamples = sum(as.numeric(SampleType == "Unknown", na.rm = TRUE)))
   
-  meanBlankArea <- mean(allData %>% filter(Compound == compound, 
-                                    SampleType %in% c("Matrix Blank")) %>%
-                                    pull(PeakArea), na.rm = TRUE)
-  
-  meanQc1Area <- mean(allData %>% filter (Compound == compound, TheoreticalAmount == 1.00) %>% 
-                        pull(PeakArea), na.rm = TRUE)
-  
-  meanQc2Area <- mean(allData %>% filter (Compound == compound, TheoreticalAmount == 10.00) %>% 
-                        pull(PeakArea), na.rm = TRUE)
-  
-  detectionLimit <- allData %>% filter(Compound == compound, SampleType == "Cal Std", 
-                                    abs(CalculatedAmount - TheoreticalAmount) / TheoreticalAmount <= 0.2) %>%
-                                    summarize(LowestCalSTD = min(CalculatedAmount, na.rm = TRUE)) %>%
-                                    pull(LowestCalSTD)
-                    if (is.infinite(detectionLimit) || is.na(detectionLimit)) {
-                      detectionLimit <- allData %>% filter(Compound == compound, SampleType == "Cal Std", 
-                                                           TheoreticalAmount == 0.01) %>%
-                                                           pull(CalculatedAmount) %>%
-                                                           first() }
+  # Handle cases where detectionLimit is NA or infinite
+  if (!is.finite(summaryStats$detectionLimit)) {
+    summaryStats$detectionLimit <- allData %>%
+      filter(Compound == compound, SampleType == "Cal Std", TheoreticalAmount == 0.01) %>%
+      pull(CalculatedAmount) %>%
+      first()
+  }
   
   # Generate compound table
-  compound_table <- allData %>%
-    filter(Compound == compound) %>%
-    mutate(
-      CalCheck = if_else(SampleType == "Cal Std", abs(CalculatedAmount - TheoreticalAmount) / TheoreticalAmount, NA_real_),
-      ISTDPercentError = abs(ISTDArea - meanIstdArea) / meanIstdArea,
-      SufficientBlanks = sum(SampleType == "Matrix Blank", na.rm = TRUE) / sum(SampleType == "Unknown", na.rm = TRUE)
-    ) %>%
-    select(Compound, SampleType, SampleLevel, TheoreticalAmount, CalculatedAmount, 
-           CalCheck, PeakArea, ISTDArea, MeanISTDArea = meanIstdArea, SampleAcquisitionDate, SufficientBlanks)
+    result_table <- allData %>% filter(Compound == compound) %>%
+      mutate(
+        calRecovery = if_else(SampleType == "Cal Std", abs(CalculatedAmount - TheoreticalAmount) / TheoreticalAmount, NA_real_),
+        IstdRecovery = abs(ISTDArea - summaryStats$meanIstdArea) / summaryStats$meanIstdArea,
+        SufficientBlanks = if_else(summaryStats$numBlanks/summaryStats$numSamples > 0.0666, "Sufficient Blanks", "Insufficient Blanks"), #Not working?
+        CalFlag = if_else(abs(calRecovery) > 0.2, "FLAG - Calibration standard outside 20% range", "PASS"),
+        DetectionLimit = case_when(
+          any(!is.na(calRecovery) & calRecovery <= 0.2) ~ as.character(summaryStats$detectionLimit),  
+          TheoreticalAmount < summaryStats$detectionLimit ~ paste0("BDL(<", round(summaryStats$detectionLimit, 2), "ppb)"),
+          TRUE ~ as.character(TheoreticalAmount))) %>%
+      select(Compound, SampleType, SampleLevel, TheoreticalAmount, CalculatedAmount, DetectionLimit, calRecovery, CalFlag, 
+             PeakArea, ISTDArea, IstdRecovery, SampleAcquisitionDate, SufficientBlanks)
   
-  compound_tables[[compound]] <- compound_table
+  # Store results
+  result_tables[[compound]] <- result_table
   
-  # Check if all calibration standards pass
-  all_cal_stds_pass <- all(compound_table$CalCheck <= 0.2, na.rm = TRUE)
-  
-  # Generate flag report
-  flag_reports[[compound]] <- compound_table %>%
-    mutate(
-      CalFlag = if_else(abs(CalCheck) > 0.2, "FLAG - Calibration standard outside 20% range", "PASS"),
-      DetectionLimit = if_else(all_cal_stds_pass, 
-                               as.character(detectionLimit),  # Use the lowest cal value if all cal standards pass
-                               if_else(TheoreticalAmount < detectionLimit, 
-                                       paste0("BDL(<", round(detectionLimit, 2), "ppb)"), 
-                                       as.character(TheoreticalAmount))
-      )
-    ) %>%
-    select(Compound, SampleType, SampleLevel, TheoreticalAmount, DetectionLimit, 
-           CalCheck, CalFlag, PeakArea, ISTDArea, MeanISTDArea, SampleAcquisitionDate, SufficientBlanks)
 }
