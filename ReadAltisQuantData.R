@@ -39,39 +39,66 @@ allData <- excelData %>%
   mutate(Site = if_else(SampleType == "Unknown", word(RawFileName, 1, sep = "[-_]"), NA_character_),
          BottleNumber = if_else(SampleType == "Unknown", word(RawFileName, 2, sep = "[-_]"), NA_character_),
          SampleName = if_else(SampleType == "Unknown", paste(Site, BottleNumber, sep = "-"), NA_character_)) %>% 
-  select(Site, BottleNumber, SampleName, everything())
+  select(Site, BottleNumber, SampleName, everything()) %>% 
+  filter(Compound %in% c("6PPD Quinone"))
 
-# Summary Table: Calculate Mean ISTD Peak Area for each Compound
-summary <- bind_rows(
-  allData %>% 
-    group_by(Compound) %>% 
-    filter(SampleType %in% c("Cal Std", "Matrix Blank")) %>% 
-    summarize(MeanISTDPeakArea = mean(ISTDArea, na.rm = TRUE)) %>% 
-    ungroup()
-)
-
-# Merging summary table with allData to add MeanISTDPeakArea
-allData <- allData %>%
-  left_join(summary, by = "Compound")
-
-# Checking Cal Curve and calculating errors for all sample types
-compound_list <- unique(allData$Compound)
+# Initialize result lists
 compound_tables <- list()
 flag_reports <- list()
 
-for (compound in compound_list) {
+# Process each compound
+for (compound in unique(allData$Compound)) {
+  
+  meanIstdArea <- mean(allData %>% filter(Compound == compound, SampleType %in% c("Cal Std", "Matrix Blank")) %>%
+                                   pull(ISTDArea), na.rm = TRUE)
+  
+  meanBlankArea <- mean(allData %>% filter(Compound == compound, 
+                                    SampleType %in% c("Matrix Blank")) %>%
+                                    pull(PeakArea), na.rm = TRUE)
+  
+  meanQc1Area <- mean(allData %>% filter (Compound == compound, TheoreticalAmount == 1.00) %>% 
+                        pull(PeakArea), na.rm = TRUE)
+  
+  meanQc2Area <- mean(allData %>% filter (Compound == compound, TheoreticalAmount == 10.00) %>% 
+                        pull(PeakArea), na.rm = TRUE)
+  
+  detectionLimit <- allData %>% filter(Compound == compound, SampleType == "Cal Std", 
+                                    abs(CalculatedAmount - TheoreticalAmount) / TheoreticalAmount <= 0.2) %>%
+                                    summarize(LowestCalSTD = min(CalculatedAmount, na.rm = TRUE)) %>%
+                                    pull(LowestCalSTD)
+                    if (is.infinite(detectionLimit) || is.na(detectionLimit)) {
+                      detectionLimit <- allData %>% filter(Compound == compound, SampleType == "Cal Std", 
+                                                           TheoreticalAmount == 0.01) %>%
+                                                           pull(CalculatedAmount) %>%
+                                                           first() }
+  
+  # Generate compound table
   compound_table <- allData %>%
     filter(Compound == compound) %>%
-    mutate(StockPercentError = if_else(SampleType == "Cal Std", 
-                                  abs(CalculatedAmount - TheoreticalAmount) / TheoreticalAmount, 
-                                  NA_real_),
-      ISTDPercentError = abs(ISTDArea - MeanISTDPeakArea) / MeanISTDPeakArea) %>%
+    mutate(
+      CalCheck = if_else(SampleType == "Cal Std", abs(CalculatedAmount - TheoreticalAmount) / TheoreticalAmount, NA_real_),
+      ISTDPercentError = abs(ISTDArea - meanIstdArea) / meanIstdArea,
+      SufficientBlanks = sum(SampleType == "Matrix Blank", na.rm = TRUE) / sum(SampleType == "Unknown", na.rm = TRUE)
+    ) %>%
     select(Compound, SampleType, SampleLevel, TheoreticalAmount, CalculatedAmount, 
-           StockPercentError, PeakArea, ISTDArea, MeanISTDPeakArea)
+           CalCheck, PeakArea, ISTDArea, MeanISTDArea = meanIstdArea, SampleAcquisitionDate, SufficientBlanks)
+  
   compound_tables[[compound]] <- compound_table
   
-
-  flag_report <- compound_table %>%
-    mutate(FLAG = if_else(abs(StockPercentError) > 0.2, "Flagged", "OK"))
-  flag_reports[[compound]] <- flag_report
+  # Check if all calibration standards pass
+  all_cal_stds_pass <- all(compound_table$CalCheck <= 0.2, na.rm = TRUE)
+  
+  # Generate flag report
+  flag_reports[[compound]] <- compound_table %>%
+    mutate(
+      CalFlag = if_else(abs(CalCheck) > 0.2, "FLAG - Calibration standard outside 20% range", "PASS"),
+      DetectionLimit = if_else(all_cal_stds_pass, 
+                               as.character(detectionLimit),  # Use the lowest cal value if all cal standards pass
+                               if_else(TheoreticalAmount < detectionLimit, 
+                                       paste0("BDL(<", round(detectionLimit, 2), "ppb)"), 
+                                       as.character(TheoreticalAmount))
+      )
+    ) %>%
+    select(Compound, SampleType, SampleLevel, TheoreticalAmount, DetectionLimit, 
+           CalCheck, CalFlag, PeakArea, ISTDArea, MeanISTDArea, SampleAcquisitionDate, SufficientBlanks)
 }
