@@ -6,25 +6,67 @@ library(lubridate)
 library(janitor)
 library(writexl)
 library(shiny)
+library(rsconnect)
+library(shinydashboard)
 
 # UI definition
-ui <- fluidPage(
-  titlePanel("Check Altis Data"),
+ui <- dashboardPage(
+  dashboardHeader(title = "Scholes Workflows"),
   
-  sidebarLayout(
-    sidebarPanel(
-      fileInput("file", "Choose Excel File", accept = c(".xlsx")),
-      fileInput("sampletimes", "Choose Sample Times CSV (optional)", accept = c(".csv")),
-      actionButton("process_button", "Process Data")
-    ),
-    
-    mainPanel(
-      tableOutput("processed_data_preview"),
-      downloadButton("download_csv", "Download compiled results as CSV"),
-      downloadButton("download_excel", "Download report of flags for each compound")
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("LCMS Data Processing", tabName = "data_processing", icon = icon("cogs"))
+    )
+  ),
+  
+  dashboardBody(
+    tabItems(
+      tabItem(tabName = "data_processing",
+              fluidRow(
+                box(
+                  title = "Upload your quantitation data spreadsheet and sample times csv",
+                  status = "primary",
+                  solidHeader = TRUE,
+                  width = 12,
+                  fileInput("file", "Upload quantitation data excel file", accept = c(".xlsx")),
+                  fileInput("sampletimes", "Upload sample times CSV (optional)", accept = c(".csv")),
+                  actionButton("process_button", "Process Data")
+                )
+              ),
+              
+              fluidRow(
+                box(
+                  title = "Preview processed data",
+                  status = "info",
+                  solidHeader = TRUE,
+                  width = 12,
+                  tableOutput("processed_data_preview")
+                )
+              ),
+              
+              fluidRow(
+                box(
+                  title = "Download processed data and flag reports",
+                  status = "warning",
+                  solidHeader = TRUE,
+                  width = 12,
+                  downloadButton("download_csv", "Download compiled results CSV"),
+                  downloadButton("download_excel", "Download flag reports XLSX")
+                )
+              )
+      )
     )
   )
 )
+
+# Server definition
+server <- function(input, output) {
+  # Your existing server code here, handling the file input, processing, and outputs.
+}
+
+# Run the app
+shinyApp(ui = ui, server = server)
+
 
 # Server logic
 server <- function(input, output, session) {
@@ -149,6 +191,9 @@ processed_data <- eventReactive(input$process_button, {
       # Perform the left join
       compiled_results <- compiled_results %>%
         left_join(csvSampleTimes, by = c("sampleName" = "sample"))}
+    
+    compiled_results <- compiled_results %>% 
+      select(-sampleName)
 
     list(compiled_results = compiled_results, result_tables = result_tables_list)
   })
@@ -161,7 +206,7 @@ processed_data <- eventReactive(input$process_button, {
   # Download handler for CSV
   output$download_csv <- downloadHandler(
     filename = function() {
-      paste("compiled_results_", Sys.Date(), ".csv", sep = "")
+      paste("compiledResults.csv", sep = "")
     },
     content = function(file) {
       write.csv(processed_data()$compiled_results, file, row.names = FALSE)
@@ -170,7 +215,7 @@ processed_data <- eventReactive(input$process_button, {
   
   output$download_excel <- downloadHandler(
     filename = function() {
-      paste("report_", Sys.Date(), ".xlsx", sep = "")
+      paste("flagReportByCompound.xlsx", sep = "")
     },
     content = function(file) {
       # Access the result_tables from the processed data
