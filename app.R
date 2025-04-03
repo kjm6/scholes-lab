@@ -20,17 +20,6 @@ ui <- fluidPage(
     
     mainPanel(
       tableOutput("processed_data_preview"),
-      
-      # Debugging outputs
-      verbatimTextOutput("debug_excel_data"),  # To display the first few rows of excelData
-      verbatimTextOutput("debug_column_names"),  # To display column names of excelData
-      verbatimTextOutput("debug_all_data"),  # To display allData after renaming columns
-      verbatimTextOutput("debug_column_existence"),  # To check if all columns exist
-      verbatimTextOutput("debug_cleaned_data"),  # To display cleaned data after mutation
-      verbatimTextOutput("debug_final_data"),  # To display final data after filtering
-      verbatimTextOutput("debug_result_tables"),  # To display result_tables structure
-      verbatimTextOutput("debug_compiled_results"),  # To display compiled_results structure
-      
       downloadButton("download_csv", "Download compiled results as CSV"),
       downloadButton("download_excel", "Download report of flags for each compound")
     )
@@ -87,7 +76,7 @@ processed_data <- eventReactive(input$process_button, {
     
     
     # Loop through the compounds to create result tables
-    result_tables <- list()  # Initialize the result_tables list
+    result_tables_list <- list()  # Initialize the result_tables list
     
     for (compoundName in unique(allData$compound)) {
       
@@ -134,61 +123,70 @@ processed_data <- eventReactive(input$process_button, {
                istdPeakArea, istdRecovery, istdFlag, peakArea, blankRecovery, blankFlag)
       
       # Store the result table in result_tables list
-      result_tables[[compoundName]] <- result_table
+      result_tables_list[[compoundName]] <- result_table
     }
     
-    # Debugging: Print the structure of result_tables
-    output$debug_result_tables <- renderPrint({
-      cat("Structure of result_tables:\n")  # Title or header
-      str(result_tables)  # This will print the structure of result_tables
-    })
-    
-    # Debugging: Print the structure of result_tables
-    output$debug_result_tables <- renderPrint({
-      cat("Glimpse of result_tables:\n")
-      glimpse(result_tables)  # This will print the structure of result_tables
-    })
-    
     # Combine all the result tables into compiled_results
-    compiled_results <- result_tables %>%
+    compiled_results <- result_tables_list %>%
       map_dfr(~ {
         .x %>%
-          select(rawFileName, compound, reportableConcentration) %>%
+          select(rawFileName, sampleName, compound, reportableConcentration) %>%
           filter(!is.na(reportableConcentration))  # Uncomment if you need this filtering
       }) %>%
       pivot_wider(names_from = compound, values_from = reportableConcentration, values_fn = ~ .x[1])
     
-    # Convert columns to character before joining
-    if (!is.null(csvSampleTimes)) {
+    # Left join with the optional Sample Times CSV (if uploaded)
+    if (!is.null(input$sampletimes)) {
+      # Read the Sample Times CSV file
+      csvSampleTimes <- read.csv(input$sampletimes$datapath)
+      
+      # Convert the 'sample' column in Sample Times to character
       csvSampleTimes$sample <- as.character(csvSampleTimes$sample)
-    }
-    compiled_results$sampleName <- as.character(compiled_results$sampleName)
-    
-    
-    if (!is.null(csvSampleTimes)) {
+      
+      # Convert the 'sampleName' column in allData to character
+      compiled_results$sampleName <- as.character(compiled_results$sampleName)
+      
+      # Perform the left join
       compiled_results <- compiled_results %>%
-        left_join(csvSampleTimes, by = c("sampleName" = "sample"))
-    }
+        left_join(csvSampleTimes, by = c("sampleName" = "sample"))}
 
-    return(compiled_results)
+    list(compiled_results = compiled_results, result_tables = result_tables_list)
   })
   
   # Render processed data table in the UI
   output$processed_data_preview <- renderTable({
-    processed_data()
+    processed_data()$compiled_results
   })
-  
-  # Additional code for handling downloads, UI, etc.
-  output$download_results <- downloadHandler(
+
+  # Download handler for CSV
+  output$download_csv <- downloadHandler(
     filename = function() {
-      paste("processed_results_", Sys.Date(), ".csv", sep = "")
+      paste("compiled_results_", Sys.Date(), ".csv", sep = "")
     },
     content = function(file) {
-      write.csv(processed_data(), file, row.names = FALSE)
-})
+      write.csv(processed_data()$compiled_results, file, row.names = FALSE)
+    }
+  )
   
+  output$download_excel <- downloadHandler(
+    filename = function() {
+      paste("report_", Sys.Date(), ".xlsx", sep = "")
+    },
+    content = function(file) {
+      # Access the result_tables from the processed data
+      result_tables_data <- processed_data()$result_tables  # Get the result tables
+      
+      # Split each data frame by compound and write to Excel
+      data_split_by_compound <- result_tables_data %>%
+        map(~ {
+          .x %>%
+            select(-compound)  # Remove the compound column if it's not needed in the sheet
+        })
+      
+      write_xlsx(data_split_by_compound, path = file)
+    }
+  )
 }
 
 # Run the app
 shinyApp(ui = ui, server = server)
-
