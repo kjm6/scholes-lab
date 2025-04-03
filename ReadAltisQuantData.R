@@ -105,10 +105,12 @@ compiled_results <- result_tables %>%
   map_dfr(~ {
     .x %>%
       select(rawFileName, sampleName, compound, reportableConcentration) %>%
-      filter(!is.na(reportableConcentration))  # Remove rows where reportableConcentration is NA
+      filter(!is.na(reportableConcentration)) 
   }) %>%
-  pivot_wider(names_from = compound, values_from = reportableConcentration, values_fn = ~ .x[1]) %>%   # Take the first concentration if there are duplicates
+  pivot_wider(names_from = compound, values_from = reportableConcentration, values_fn = ~ .x[1]) %>% 
   left_join(csvSampleTimes, by = c("sampleName" = "sample"))
+
+#Idea: write a summary up front that tells you detection limits, other general issues. make it print within the files im exporting
   
 output_file_path <- file.path(getwd(), paste0("reportableresults_", gsub(".xlsx", "", basename(file_paths[1]) ), ".csv"))
 write.csv(compiled_results, output_file_path, row.names = FALSE)
