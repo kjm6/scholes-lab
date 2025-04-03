@@ -4,7 +4,7 @@ setwd("C:/Users/katie/OneDrive - UBC/Research/Turf/TurfStormwater_1") #SET THIS 
 
 file_paths <- c("AltisRun1.4_QuantitationData_w_ISTD_20250226112814.xlsx") #SET THIS TO EXCEL SPREADSHEET FILE NAME
 csvSampleTimes <- read.csv("SampleTimes.csv") #SET THIS TO SAMPLE SPREADSHEET FILE NAME
-result_tables <- list() #Initializing results list
+result_tables <- list()
 
 #Converting files into one data frame
 excelData <- file_paths %>% set_names() %>%
@@ -15,12 +15,12 @@ excelData <- file_paths %>% set_names() %>%
     sheets %>% 
       map(~ {sheet_data <- read_excel(file_path, sheet = .)
       sheet_data <- sheet_data %>%
-        mutate(across(everything(), as.character)) %>%  # Convert all columns to character temporarily
+        mutate(across(everything(), as.character)) %>% 
         mutate(SourceFile = file_name)
       return(sheet_data)}) %>% 
-      bind_rows()  # Combine all sheets in the file into one data frame
+      bind_rows() 
   }) %>%
-  bind_rows()  # Combine all data from different files
+  bind_rows() 
 
 #Cleaning Altis dataframe
 allData <- excelData %>%
@@ -52,7 +52,7 @@ for (compoundName in unique(allData$compound)) {
               detectionLimit = min(calculatedAmount[sampleType == "Cal Std" & abs(calculatedAmount - theoreticalAmount) / theoreticalAmount <= 0.2], na.rm = TRUE),
     numBlanks = sum(as.numeric(sampleType == "Matrix Blank", na.rm = TRUE)),
     numSamples = sum(as.numeric(sampleType == "Unknown", na.rm = TRUE)))
-  # Handle cases where detectionLimit is NA or infinite
+
   if (!is.finite(summaryStats$detectionLimit)) {
     summaryStats$detectionLimit <- allData %>%
       filter(compound == compound, sampleType == "Cal Std", theoreticalAmount == 0.01) %>%
@@ -87,7 +87,7 @@ for (compoundName in unique(allData$compound)) {
           as.character(round(if_else(is.na(istdRecovery), calculatedAmount, calculatedAmount / istdRecovery), 3)),
           paste0("BDL (<", round(summaryStats$detectionLimit, 2), ")"))) %>% 
       
-      select(rawFileName, sampleType, compound, theoreticalAmount, calculatedAmount, reportableConcentration, calRecovery, calFlag, 
+      select(rawFileName, sampleName, sampleType, compound, theoreticalAmount, calculatedAmount, reportableConcentration, calRecovery, calFlag, 
               istdPeakArea, istdRecovery, istdFlag, peakArea, blankRecovery, blankFlag)
   
   result_tables[[compoundName]] <- result_table
@@ -100,16 +100,16 @@ view(result_tables[["6ppd"]])
 view(result_tables[["6PPD Quinone"]])
 view(result_tables[["HMMM"]])
 
-
-# Create an empty data frame to store the results
+#Printing Results
 compiled_results <- result_tables %>%
   map_dfr(~ {
     .x %>%
-      select(rawFileName, compound, reportableConcentration) %>%
+      select(rawFileName, sampleName, compound, reportableConcentration) %>%
       filter(!is.na(reportableConcentration))  # Remove rows where reportableConcentration is NA
   }) %>%
-  pivot_wider(names_from = compound, values_from = reportableConcentration, values_fn = ~ .x[1])  # Take the first concentration if there are duplicates
-
+  pivot_wider(names_from = compound, values_from = reportableConcentration, values_fn = ~ .x[1]) %>%   # Take the first concentration if there are duplicates
+  left_join(csvSampleTimes, by = c("sampleName" = "sample"))
+  
 output_file_path <- file.path(getwd(), paste0("reportableresults_", gsub(".xlsx", "", basename(file_paths[1]) ), ".csv"))
 write.csv(compiled_results, output_file_path, row.names = FALSE)
 cat("Data saved as CSV at:", output_file_path, "\n")
