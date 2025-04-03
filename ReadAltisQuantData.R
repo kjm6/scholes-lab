@@ -1,9 +1,15 @@
 rm(list = ls())
 lapply(c("tidyverse", "ggplot2", "readxl", "stringr", "lubridate", "janitor", "writexl"), library, character.only = TRUE)
-setwd("C:/Users/katie/OneDrive - UBC/Research/Turf/TurfStormwater_1") #SET THIS TO THE PATH WHERE YOUR FILE IS SAVED
+# setwd("C:/Users/katie/OneDrive - UBC/Research/Turf/TurfStormwater_1")
 
-file_paths <- c("AltisRun1.4_QuantitationData_w_ISTD_20250226112814.xlsx") #SET THIS TO EXCEL SPREADSHEET FILE NAME
-csvSampleTimes <- read.csv("SampleTimes.csv") #SET THIS TO SAMPLE SPREADSHEET FILE NAME
+file_paths <- c("AltisRun1.4_QuantitationData_w_ISTD_20250226112814.xlsx")
+ sample_times_path <- "SampleTimes.csv"
+ if (file.exists(sample_times_path)) {
+   csvSampleTimes <- read.csv(sample_times_path)
+ } else {
+   csvSampleTimes <- NULL  # Set to NULL if the file is missing
+   message("No SampleTimes.csv found. Proceeding without it.")
+ }
 result_tables <- list()
 
 #Converting files into one data frame
@@ -94,12 +100,6 @@ for (compoundName in unique(allData$compound)) {
   
 }
 
-#CHECK RESULTS HERE
-view(result_tables[["Benzotriazole"]])
-view(result_tables[["6ppd"]])
-view(result_tables[["6PPD Quinone"]])
-view(result_tables[["HMMM"]])
-
 #Printing Results
 compiled_results <- result_tables %>%
   map_dfr(~ {
@@ -107,10 +107,21 @@ compiled_results <- result_tables %>%
       select(rawFileName, sampleName, compound, reportableConcentration) %>%
       filter(!is.na(reportableConcentration)) 
   }) %>%
-  pivot_wider(names_from = compound, values_from = reportableConcentration, values_fn = ~ .x[1]) %>% 
-  left_join(csvSampleTimes, by = c("sampleName" = "sample"))
+  pivot_wider(names_from = compound, values_from = reportableConcentration, values_fn = ~ .x[1])
 
-#Idea: write a summary up front that tells you detection limits, other general issues. make it print within the files im exporting
+# Only join sample times if the file was loaded successfully
+
+# Convert columns to character before joining
+if (!is.null(csvSampleTimes)) {
+  csvSampleTimes$sample <- as.character(csvSampleTimes$sample)
+}
+compiled_results$sampleName <- as.character(compiled_results$sampleName)
+
+
+if (!is.null(csvSampleTimes)) {
+  compiled_results <- compiled_results %>%
+    left_join(csvSampleTimes, by = c("sampleName" = "sample"))
+}
   
 output_file_path <- file.path(getwd(), paste0("reportableresults_", gsub(".xlsx", "", basename(file_paths[1]) ), ".csv"))
 write.csv(compiled_results, output_file_path, row.names = FALSE)
