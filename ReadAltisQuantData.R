@@ -1,5 +1,5 @@
 rm(list = ls())
-lapply(c("tidyverse", "ggplot2", "readxl", "stringr", "lubridate", "janitor"), library, character.only = TRUE)
+lapply(c("tidyverse", "ggplot2", "readxl", "stringr", "lubridate", "janitor", "writexl"), library, character.only = TRUE)
 setwd("C:/Users/katie/OneDrive - UBC/Research/Turf/TurfStormwater_1") #SET THIS TO THE PATH WHERE YOUR FILE IS SAVED
 
 file_paths <- c("AltisRun1.4_QuantitationData_w_ISTD_20250226112814.xlsx") #SET THIS TO EXCEL SPREADSHEET FILE NAME
@@ -114,3 +114,6 @@ output_file_path <- file.path(getwd(), paste0("reportableresults_", gsub(".xlsx"
 write.csv(compiled_results, output_file_path, row.names = FALSE)
 cat("Data saved as CSV at:", output_file_path, "\n")
 
+output_excel_path <- file.path(getwd(), paste0("resultsFlagReports_", file_paths, ".xlsx"))
+write_xlsx(result_tables, path = output_excel_path)
+cat("Data saved as excel file at:", output_file_path, "\n")
