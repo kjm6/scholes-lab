@@ -4,6 +4,7 @@ setwd("C:/Users/katie/OneDrive - UBC/Research/Turf/TurfStormwater_1") #SET THIS 
 
 file_paths <- c("AltisRun1.4_QuantitationData_w_ISTD_20250226112814.xlsx") #SET THIS TO EXCEL SPREADSHEET FILE NAME
 csvSampleTimes <- read.csv("SampleTimes.csv") #SET THIS TO SAMPLE SPREADSHEET FILE NAME
+result_tables <- list() #Initializing results list
 
 #Converting files into one data frame
 excelData <- file_paths %>% set_names() %>%
@@ -23,63 +24,93 @@ excelData <- file_paths %>% set_names() %>%
 
 #Cleaning Altis dataframe
 allData <- excelData %>%
-  rename(RawFileName = "Sample Raw File Name", SampleType = "Sample Type", SampleID = "Sample ID", 
-         VialPosition = "Sample Vial Position", SampleOrder = "Sample Order", SampleOrderSortable = "Sample Order Sortable", 
-         SampleLevel = "Sample Level", SampleAcquisitionDate = "Sample Acquisition Date", InjectionVoluL = "Sample Injection Volume", 
-         ConversionFactor = "Sample Conversion Factor", Compound = "Compound Name", RetentionTime = "Retention Time", TheoreticalAmount = "Theoretical Amount",
-         CalculatedAmount = "Calculated Amount", TotalArea = "Total Area", TotalHeight = "Total Height", 
-         TotalIonArea = "Total Ion Area", TotalIonHeight = "Total Ion Height", TotalIonResponse = "Total Ion Response",
-         TotalResponse = "Total Response", PeakArea = "Peak Area", PeakHeight = "Peak Height", ResponseFactor = "Response Factor", 
-         ISTDCompoundName = "ISTD Compound Name", ISTDArea = "ISTD Area") %>%
-  mutate(across(c(TheoreticalAmount, RetentionTime, CalculatedAmount, TotalArea, TotalHeight, 
-                  TotalIonArea, TotalIonHeight, TotalResponse, PeakArea, 
-                  PeakHeight, ResponseFactor, ISTDArea),
+  rename(rawFileName = "Sample Raw File Name", sampleType = "Sample Type", sampleID = "Sample ID", 
+         vialPosition = "Sample Vial Position", sampleOrder = "Sample Order", sampleOrderSortable = "Sample Order Sortable", 
+         sampleLevel = "Sample Level", sampleAcquisitionDate = "Sample Acquisition Date", injectionVoluL = "Sample Injection Volume", 
+         conversionFactor = "Sample Conversion Factor", compound = "Compound Name", retentionTime = "Retention Time", theoreticalAmount = "Theoretical Amount",
+         calculatedAmount = "Calculated Amount", totalArea = "Total Area", totalHeight = "Total Height", 
+         totalIonArea = "Total Ion Area", totalIonHeight = "Total Ion Height", totalIonResponse = "Total Ion Response",
+         totalResponse = "Total Response", peakArea = "Peak Area", peakHeight = "Peak Height", responseFactor = "Response Factor", 
+         istdCompoundName = "ISTD Compound Name", istdPeakArea = "ISTD Area") %>%
+  mutate(across(c(theoreticalAmount, retentionTime, calculatedAmount, totalArea, totalHeight, 
+                  totalIonArea, totalIonHeight, totalResponse, peakArea, 
+                  peakHeight, responseFactor, istdPeakArea),
                 ~ parse_number(if_else(. %in% c("N/F", "N/A"), NA_character_, .)))) %>%
-  mutate(Site = if_else(SampleType == "Unknown", word(RawFileName, 1, sep = "[-_]"), NA_character_),
-         BottleNumber = if_else(SampleType == "Unknown", word(RawFileName, 2, sep = "[-_]"), NA_character_),
-         SampleName = if_else(SampleType == "Unknown", paste(Site, BottleNumber, sep = "-"), NA_character_)) %>% 
-  select(Site, BottleNumber, SampleName, everything()) %>% 
-  filter(Compound %in% c("Benzotriazole", "6PPD Quinone", "6ppd", "HMMM"))
+  mutate(site = if_else(sampleType == "Unknown", word(rawFileName, 1, sep = "[-_]"), NA_character_),
+         bottleNumber = if_else(sampleType == "Unknown", word(rawFileName, 2, sep = "[-_]"), NA_character_),
+         sampleName = if_else(sampleType == "Unknown", paste(site, bottleNumber, sep = "-"), NA_character_)) %>% 
+  select(site, bottleNumber, sampleName, everything()) %>% 
+  filter(compound %in% c("Benzotriazole", "6PPD Quinone", "6ppd", "HMMM"))
 
-# Initialize result list
-result_tables <- list()
-
-# Process each compound
-for (compound in unique(allData$Compound)) {
+for (compoundName in unique(allData$compound)) {
   
-  # Compute summary statistics
-  summaryStats <- allData %>% filter(Compound == compound) %>%
-    summarize(meanIstdArea = mean(ISTDArea[SampleType %in% c("Cal Std", "Matrix Blank")], na.rm = TRUE),
-              meanBlankArea = mean(PeakArea[SampleType == "Matrix Blank"], na.rm = TRUE),
-              meanQcLowArea = mean(PeakArea[SampleType == "QC Check" & TheoreticalAmount == 1.00], na.rm = TRUE),
-              meanQcHighArea = mean(PeakArea[SampleType == "QC Check" & TheoreticalAmount == 10.00], na.rm = TRUE),
-              detectionLimit = min(CalculatedAmount[SampleType == "Cal Std" & abs(CalculatedAmount - TheoreticalAmount) / TheoreticalAmount <= 0.2], na.rm = TRUE),
-    numBlanks = sum(as.numeric(SampleType == "Matrix Blank", na.rm = TRUE)),
-    numSamples = sum(as.numeric(SampleType == "Unknown", na.rm = TRUE)))
-  
+  summaryStats <- allData %>% filter(compound == compoundName) %>%
+    summarize(meanIstdArea = mean(istdPeakArea[sampleType %in% c("Cal Std", "Matrix Blank")], na.rm = TRUE),
+              meanBlankArea = mean(peakArea[sampleType == "Matrix Blank"], na.rm = TRUE),
+              meanQcLowArea = mean(peakArea[sampleType == "QC Check" & theoreticalAmount == 1.00], na.rm = TRUE),
+              meanQcHighArea = mean(peakArea[sampleType == "QC Check" & theoreticalAmount == 10.00], na.rm = TRUE),
+              detectionLimit = min(calculatedAmount[sampleType == "Cal Std" & abs(calculatedAmount - theoreticalAmount) / theoreticalAmount <= 0.2], na.rm = TRUE),
+    numBlanks = sum(as.numeric(sampleType == "Matrix Blank", na.rm = TRUE)),
+    numSamples = sum(as.numeric(sampleType == "Unknown", na.rm = TRUE)))
   # Handle cases where detectionLimit is NA or infinite
   if (!is.finite(summaryStats$detectionLimit)) {
     summaryStats$detectionLimit <- allData %>%
-      filter(Compound == compound, SampleType == "Cal Std", TheoreticalAmount == 0.01) %>%
-      pull(CalculatedAmount) %>%
+      filter(compound == compound, sampleType == "Cal Std", theoreticalAmount == 0.01) %>%
+      pull(calculatedAmount) %>%
       first()
   }
   
   # Generate compound table
-    result_table <- allData %>% filter(Compound == compound) %>%
+    result_table <- allData %>% filter(compound == compoundName) %>%
       mutate(
-        calRecovery = if_else(SampleType == "Cal Std", abs(CalculatedAmount - TheoreticalAmount) / TheoreticalAmount, NA_real_),
-        IstdRecovery = abs(ISTDArea - summaryStats$meanIstdArea) / summaryStats$meanIstdArea,
-        SufficientBlanks = if_else(summaryStats$numBlanks/summaryStats$numSamples > 0.0666, "Sufficient Blanks", "Insufficient Blanks"), #Not working?
-        CalFlag = if_else(abs(calRecovery) > 0.2, "FLAG - Calibration standard outside 20% range", "PASS"),
-        DetectionLimit = case_when(
-          any(!is.na(calRecovery) & calRecovery <= 0.2) ~ as.character(summaryStats$detectionLimit),  
-          TheoreticalAmount < summaryStats$detectionLimit ~ paste0("BDL(<", round(summaryStats$detectionLimit, 2), "ppb)"),
-          TRUE ~ as.character(TheoreticalAmount))) %>%
-      select(Compound, SampleType, SampleLevel, TheoreticalAmount, CalculatedAmount, DetectionLimit, calRecovery, CalFlag, 
-             PeakArea, ISTDArea, IstdRecovery, SampleAcquisitionDate, SufficientBlanks)
+        calRecovery = if_else(sampleType == "Cal Std", 
+                              round(abs(calculatedAmount / theoreticalAmount), 3), 
+                              NA_real_),
+        calFlag = if_else(abs(1 - calRecovery) < 0.2, 
+                          "PASS", 
+                          "FLAG - Calibration standard outside 20% range"),
+        
+        istdRecovery = abs(istdPeakArea / summaryStats$meanIstdArea),
+        istdFlag = case_when(is.na(istdPeakArea) ~ "FLAG - External calibration calculation",
+                             abs(1 - istdRecovery) < 0.2 ~ "PASS",
+                             TRUE ~ "FLAG - ISTD recovery outside 20% range by peak area"),
+        
+        blankRecovery = if_else(sampleType == "Matrix Blank", 
+                             round(abs(peakArea / summaryStats$meanBlankArea), 3),
+                             NA_real_),
+        blankFlag = if_else(abs(1 - blankRecovery) < 0.5, 
+                             "PASS",
+                             "FLAG - Blank recovery outside of 50% range by peak area"),
+        
+        reportableConcentration = if_else(
+          calculatedAmount / coalesce(istdRecovery, 1) >= summaryStats$detectionLimit,
+          as.character(round(if_else(is.na(istdRecovery), calculatedAmount, calculatedAmount / istdRecovery), 3)),
+          paste0("BDL (<", round(summaryStats$detectionLimit, 2), ")"))) %>% 
+      
+      select(rawFileName, sampleType, compound, theoreticalAmount, calculatedAmount, reportableConcentration, calRecovery, calFlag, 
+              istdPeakArea, istdRecovery, istdFlag, peakArea, blankRecovery, blankFlag)
   
-  # Store results
-  result_tables[[compound]] <- result_table
+  result_tables[[compoundName]] <- result_table
   
 }
+
+#CHECK RESULTS HERE
+view(result_tables[["Benzotriazole"]])
+view(result_tables[["6ppd"]])
+view(result_tables[["6PPD Quinone"]])
+view(result_tables[["HMMM"]])
+
+
+# Create an empty data frame to store the results
+compiled_results <- result_tables %>%
+  map_dfr(~ {
+    .x %>%
+      select(rawFileName, compound, reportableConcentration) %>%
+      filter(!is.na(reportableConcentration))  # Remove rows where reportableConcentration is NA
+  }) %>%
+  pivot_wider(names_from = compound, values_from = reportableConcentration, values_fn = ~ .x[1])  # Take the first concentration if there are duplicates
+
+output_file_path <- file.path(getwd(), paste0("reportableresults_", gsub(".xlsx", "", basename(file_paths[1]) ), ".csv"))
+write.csv(compiled_results, output_file_path, row.names = FALSE)
+cat("Data saved as CSV at:", output_file_path, "\n")
+
